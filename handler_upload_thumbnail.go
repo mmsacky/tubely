@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net/http"
+	"time"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -28,10 +30,59 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-
 	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
 
-	// TODO: implement the upload here
+	const maxMemory = 10 << 20
 
-	respondWithJSON(w, http.StatusOK, struct{}{})
+	err = r.ParseMultipartForm(maxMemory)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Unable to parse multipart form", err)
+		return
+	}
+	defer r.MultipartForm.RemoveAll()
+
+	file, header, err := r.FormFile("thumbnail")
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Unable to parse form file", err)
+		return
+	}
+	defer file.Close()
+
+	videoMediaType := header.Header.Get("Content-Type")
+
+	fileData, err := io.ReadAll(file)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Unable to read file", err)
+		return
+	}
+
+	dbVideo, err := cfg.db.GetVideo(videoID)
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "Couldn't get video", err)
+		return
+	}
+
+	if userID != dbVideo.UserID {
+		respondWithError(w, http.StatusUnauthorized, "Couldn't validate video ownership", err)
+		return
+	}
+
+	videoThumbnail := thumbnail{
+		data:      fileData,
+		mediaType: videoMediaType,
+	}
+
+	videoThumbnails[videoID] = videoThumbnail
+
+	newThumbnailURL := fmt.Sprintf("http://%s/api/thumbnails/%s", r.Host, videoIDString)
+	dbVideo.ThumbnailURL = &newThumbnailURL
+	dbVideo.UpdatedAt = time.Now()
+
+	err = cfg.db.UpdateVideo(dbVideo)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Unable to update video", err)
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, dbVideo)
 }
