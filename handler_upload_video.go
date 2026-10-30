@@ -49,7 +49,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	if userID != dbVideo.UserID {
-		respondWithError(w, http.StatusUnauthorized, "Couldn't validate video ownership", err)
+		respondWithError(w, http.StatusUnauthorized, "Couldn't validate video ownership", nil)
 		return
 	}
 
@@ -69,7 +69,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	if mediaType != "video/mp4" {
-		respondWithError(w, http.StatusUnsupportedMediaType, "Only MP4 videos are supported.", err)
+		respondWithError(w, http.StatusUnsupportedMediaType, "Only MP4 videos are supported.", nil)
 		return
 	}
 
@@ -100,10 +100,27 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	bytesString := hex.EncodeToString(randBytes)
 	fileName := fmt.Sprintf("%s.%s", bytesString, fileExt)
 
+	var prefix string
+	aspectRatio, err := getVideoAspectRatio(tempVid.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "failed to get aspect ratio", err)
+		return
+	}
+	switch aspectRatio {
+	case "16:9":
+		prefix = "landscape"
+	case "9:16":
+		prefix = "landscape"
+	default:
+		prefix = "other"
+	}
+
+	key := fmt.Sprintf("%s/%s", prefix, fileName)
+
 	objParams := s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Body:        tempVid,
-		Key:         &fileName,
+		Key:         &key,
 		ContentType: &mediaType,
 	}
 
@@ -113,7 +130,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	newVideoURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, fileName)
+	newVideoURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, key)
 
 	dbVideo.VideoURL = &newVideoURL
 	dbVideo.UpdatedAt = time.Now()
