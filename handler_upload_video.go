@@ -87,11 +87,19 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	_, err = tempVid.Seek(0, io.SeekStart)
+	processedVideoPath, err := processVideoForFastStart(tempVid.Name())
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "failed to restart video", err)
+		respondWithError(w, http.StatusInternalServerError, "failed to process video", err)
 		return
 	}
+
+	processedVideo, err := os.Open(processedVideoPath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "failed open video", err)
+		return
+	}
+	defer os.Remove(processedVideoPath)
+	defer processedVideo.Close()
 
 	fileMediaTypeStrings := strings.Split(mediaType, "/")
 	fileExt := fileMediaTypeStrings[1]
@@ -101,7 +109,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	fileName := fmt.Sprintf("%s.%s", bytesString, fileExt)
 
 	var prefix string
-	aspectRatio, err := getVideoAspectRatio(tempVid.Name())
+	aspectRatio, err := getVideoAspectRatio(processedVideoPath)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "failed to get aspect ratio", err)
 		return
@@ -110,7 +118,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	case "16:9":
 		prefix = "landscape"
 	case "9:16":
-		prefix = "landscape"
+		prefix = "portrait"
 	default:
 		prefix = "other"
 	}
@@ -119,7 +127,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 	objParams := s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
-		Body:        tempVid,
+		Body:        processedVideo,
 		Key:         &key,
 		ContentType: &mediaType,
 	}
